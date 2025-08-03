@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
 jobs:
   # Job para verificar si necesitamos crear una nueva release
   check-version:
