@@ -1,6 +1,7 @@
 # Lorian Workspace
 
 [![CI](https://github.com/tu-usuario/Lorian-Workspace/workflows/CI/badge.svg)](https://github.com/tu-usuario/Lorian-Workspace/actions/workflows/ci.yml)
+[![Auto Release](https://github.com/tu-usuario/Lorian-Workspace/workflows/Auto%20Release/badge.svg)](https://github.com/tu-usuario/Lorian-Workspace/actions/workflows/auto-release.yml)
 [![Release](https://github.com/tu-usuario/Lorian-Workspace/workflows/Release/badge.svg)](https://github.com/tu-usuario/Lorian-Workspace/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-stable-brightgreen.svg)](https://www.rust-lang.org)
@@ -37,6 +38,32 @@
 3. Run the application - it will create default configuration files
 4. Configure your Discord Application ID and activities
 5. Enjoy automated Discord Rich Presence!
+
+## 🤖 Automatic Releases
+
+This project features **fully automated releases** - no manual intervention needed!
+
+### How it Works
+- 🚀 **Push commits** to main branch
+- 🔍 **Automatic detection** of version type based on commit messages
+- 📦 **Automatic compilation** for Windows
+- 🏷️ **Automatic tagging** and release creation
+- ⬇️ **Ready-to-download** ZIP files with executables
+
+### Commit Message Conventions
+- `feat:` → Minor version bump (new features)
+- `fix:` → Patch version bump (bug fixes)  
+- `BREAKING CHANGE:` → Major version bump (breaking changes)
+- `chore:`, `docs:`, `style:` → Patch version bump
+
+### Example
+```bash
+git commit -m "feat: added dark theme support"
+git push
+# ✨ Automatically creates v1.1.0 release!
+```
+
+📖 **Detailed guide**: See [AUTO_RELEASE_GUIDE.md](AUTO_RELEASE_GUIDE.md) for complete instructions.
 
 ## 🔧 Configuration
 

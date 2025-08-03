@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
+use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
 use notify::{
     Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
 };
@@ -154,17 +154,17 @@ impl DiscordPresenceManager {
                 .unwrap()
                 .as_secs();
 
-            let mut activity = discord_rich_presence::activity::Activity::new()
+            // Crear toda la actividad de una sola vez con todos los elementos
+            let mut activity_builder = activity::Activity::new()
                 .details(&activity_config.details)
                 .state(&activity_config.state)
                 .timestamps(
-                    discord_rich_presence::activity::Timestamps::new().start(timestamp as i64),
+                    activity::Timestamps::new().start(timestamp as i64),
                 );
 
             // Agregar imágenes si están configuradas
             if let Some(large_image) = &activity_config.large_image {
-                let mut assets = discord_rich_presence::activity::Assets::new();
-                assets = assets.large_image(large_image);
+                let mut assets = activity::Assets::new().large_image(large_image);
 
                 if let Some(large_text) = &activity_config.large_text {
                     assets = assets.large_text(large_text);
@@ -178,18 +178,28 @@ impl DiscordPresenceManager {
                     }
                 }
 
-                activity = activity.assets(assets);
+                activity_builder = activity_builder.assets(assets);
             }
 
-            // Agregar botones si están configurados
-            if let Some(buttons) = &activity_config.buttons {
-                let discord_buttons: Vec<discord_rich_presence::activity::Button> = buttons
+            // Agregar botones usando la sintaxis exacta del ejemplo funcional
+            let activity = if let Some(buttons) = &activity_config.buttons {
+                log_info(&format!("🔘 Configurando {} botones para la actividad", buttons.len()));
+                for (i, btn) in buttons.iter().enumerate() {
+                    log_info(&format!("   {}. '{}' -> {}", i + 1, btn.label, btn.url));
+                }
+                
+                // Usar la sintaxis exacta del ejemplo: .buttons(vec![...])
+                let discord_buttons = buttons
                     .iter()
-                    .map(|btn| discord_rich_presence::activity::Button::new(&btn.label, &btn.url))
-                    .collect();
+                    .map(|btn| activity::Button::new(&btn.label, &btn.url))
+                    .collect::<Vec<_>>();
 
-                activity = activity.buttons(discord_buttons);
-            }
+                log_info("✅ Aplicando botones usando sintaxis vec![...] como en el ejemplo funcional");
+                activity_builder.buttons(discord_buttons)
+            } else {
+                log_info("❌ No hay botones configurados para esta actividad");
+                activity_builder
+            };
 
             match client.set_activity(activity) {
                 Ok(_) => {
@@ -201,6 +211,21 @@ impl DiscordPresenceManager {
                         activity_config.state,
                         activity_config.duration_seconds
                     ));
+                    
+                    // Debug: mostrar resumen completo de la actividad enviada
+                    log_info("📋 RESUMEN COMPLETO de actividad enviada a Discord:");
+                    log_info(&format!("   📝 Detalles: {}", activity_config.details));
+                    log_info(&format!("   📊 Estado: {}", activity_config.state));
+                    if let Some(large_image) = &activity_config.large_image {
+                        log_info(&format!("   🖼️  Imagen grande: {}", large_image));
+                    }
+                    if let Some(small_image) = &activity_config.small_image {
+                        log_info(&format!("   🔸 Imagen pequeña: {}", small_image));
+                    }
+                    if let Some(buttons) = &activity_config.buttons {
+                        log_info(&format!("   🔘 {} botones enviados con sintaxis vec![...]", buttons.len()));
+                    }
+                    log_info("🚀 Activity completo enviado de una sola vez a Discord!");
                 }
                 Err(e) => {
                     let error_msg = format!("Error enviando actividad a Discord: {}", e);
@@ -1052,6 +1077,12 @@ async fn main() -> StdResult<(), String> {
     log_info("🚀 Iniciando Lorian Workspace...");
     log_info("📦 Iniciando en modo background sin consola");
     log_info("💡 Usa el icono del system tray para controlar la app");
+    log_info("");
+    log_info("🚨 INFORMACIÓN IMPORTANTE SOBRE BOTONES:");
+    log_info("   • Discord tiene un BUG: NO puedes ver tus propios botones");
+    log_info("   • Los botones SÍ aparecen para otros usuarios que vean tu perfil");
+    log_info("   • Para verificar: pide a un amigo que revise tu Discord");
+    log_info("");
 
     // Como es una app de Windows sin consola, no necesitamos ocultar nada
 

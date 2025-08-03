@@ -1,0 +1,203 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Job para verificar si necesitamos crear una nueva release
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should-release: ${{ steps.check.outputs.should-release }}
+      new-version: ${{ steps.check.outputs.new-version }}
+      release-type: ${{ steps.check.outputs.release-type }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Check if we should create a release
+      id: check
+      run: |
+        # Obtener el último tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        echo "Last tag: $LAST_TAG"
+        
+        # Obtener commits desde el último tag
+        COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
+        echo "Commits since last tag:"
+        echo "$COMMITS"
+        
+        # Determinar el tipo de release basándose en los commits
+        RELEASE_TYPE="none"
+        
+        if echo "$COMMITS" | grep -iE "^[a-f0-9]+ (BREAKING CHANGE|breaking change|feat!|fix!)" > /dev/null; then
+          RELEASE_TYPE="major"
+        elif echo "$COMMITS" | grep -iE "^[a-f0-9]+ (feat|feature):" > /dev/null; then
+          RELEASE_TYPE="minor"
+        elif echo "$COMMITS" | grep -iE "^[a-f0-9]+ (fix|bugfix|patch):" > /dev/null; then
+          RELEASE_TYPE="patch"
+        elif echo "$COMMITS" | grep -iE "^[a-f0-9]+ (chore|docs|style|refactor|test):" > /dev/null; then
+          RELEASE_TYPE="patch"
+        fi
+        
+        # Si hay commits pero no siguen convención, hacer patch
+        if [ "$RELEASE_TYPE" = "none" ] && [ -n "$COMMITS" ]; then
+          RELEASE_TYPE="patch"
+        fi
+        
+        echo "Release type: $RELEASE_TYPE"
+        
+        # Calcular nueva versión
+        if [ "$RELEASE_TYPE" != "none" ]; then
+          # Remover 'v' del tag para cálculos
+          CURRENT_VERSION=${LAST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+          
+          case $RELEASE_TYPE in
+            "major")
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            "minor")
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            "patch")
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "New version: $NEW_VERSION"
+          
+          echo "should-release=true" >> $GITHUB_OUTPUT
+          echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "release-type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+        else
+          echo "should-release=false" >> $GITHUB_OUTPUT
+        fi
+
+  # Job para compilar y crear la release
+  build-and-release:
+    needs: check-version
+    if: needs.check-version.outputs.should-release == 'true'
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+        target: x86_64-pc-windows-gnu
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-auto-release-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Update version in Cargo.toml
+      run: |
+        $newVersion = "${{ needs.check-version.outputs.new-version }}"
+        $versionNumber = $newVersion.Substring(1)  # Remove 'v' prefix
+        (Get-Content Cargo.toml) -replace '^version = ".*"', "version = `"$versionNumber`"" | Set-Content Cargo.toml
+        Write-Host "Updated Cargo.toml version to: $versionNumber"
+
+    - name: Build release
+      run: cargo build --release --target x86_64-pc-windows-gnu
+
+    - name: Create release archive
+      run: |
+        mkdir release
+        copy target\x86_64-pc-windows-gnu\release\lorianworkspace.exe release\
+        copy README.md release\
+        copy LICENSE release\
+        copy icon.ico release\
+        copy CHANGELOG.md release\
+        
+        # Crear archivo de información de la versión
+        echo "Lorian Workspace ${{ needs.check-version.outputs.new-version }}" > release\VERSION.txt
+        echo "Tipo de release: ${{ needs.check-version.outputs.release-type }}" >> release\VERSION.txt
+        echo "Compilado: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')" >> release\VERSION.txt
+        
+        7z a lorianworkspace-${{ needs.check-version.outputs.new-version }}-windows.zip release\*
+
+    - name: Create Git tag
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git tag ${{ needs.check-version.outputs.new-version }}
+        git push origin ${{ needs.check-version.outputs.new-version }}
+
+    - name: Generate release notes
+      id: release-notes
+      run: |
+        $lastTag = git describe --tags --abbrev=0 HEAD~1 2>$null
+        if (-not $lastTag) { $lastTag = "Initial release" }
+        
+        $commits = git log --oneline $lastTag..HEAD
+        $releaseNotes = @"
+        ## 🎉 Nueva versión: ${{ needs.check-version.outputs.new-version }}
+        
+        **Tipo de release:** ${{ needs.check-version.outputs.release-type }}
+        
+        ### 📝 Cambios en esta versión:
+        $commits
+        
+        ### 📦 Descarga
+        - **Windows**: Descarga el archivo `lorianworkspace-${{ needs.check-version.outputs.new-version }}-windows.zip`
+        - Extrae el contenido y ejecuta `lorianworkspace.exe`
+        
+        ### 🔧 Configuración
+        - El archivo `config.json` se creará automáticamente en `%APPDATA%\lorianworkspace\`
+        - Puedes personalizar tus actividades editando ese archivo
+        
+        ### 🆕 Características
+        - Discord Rich Presence automático
+        - Rotación de actividades personalizable
+        - System tray integration
+        - Hot reload de configuración
+        "@
+        
+        # Guardar las notas de release en un archivo
+        $releaseNotes | Out-File -FilePath "release-notes.txt" -Encoding UTF8
+        
+        # También output para el step
+        $releaseNotes | Set-Content "release_notes.md"
+        
+        echo "release-notes<<EOF" >> $env:GITHUB_OUTPUT
+        echo $releaseNotes >> $env:GITHUB_OUTPUT
+        echo "EOF" >> $env:GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ needs.check-version.outputs.new-version }}
+        name: "Release ${{ needs.check-version.outputs.new-version }}"
+        body_path: release_notes.md
+        files: |
+          lorianworkspace-${{ needs.check-version.outputs.new-version }}-windows.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Commit version bump
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add Cargo.toml
+        git commit -m "chore: bump version to ${{ needs.check-version.outputs.new-version }}" || echo "No changes to commit"
+        git push || echo "No changes to push"
