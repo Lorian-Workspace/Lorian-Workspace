@@ -20,7 +20,16 @@ jobs:
         override: true
         target: x86_64-pc-windows-gnu
     
-    - name: Build release
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Build release (fast)
       run: cargo build --release --target x86_64-pc-windows-gnu
     
     - name: Create release archive

@@ -1,25 +1,27 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
+use notify::{
+    Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-use crossbeam_channel::{unbounded, Receiver, Sender};
-use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
-use std::path::{Path, PathBuf};
-use std::io::Write;
-use std::env;
 
 #[cfg(windows)]
 use windows::{
     core::{w, PCWSTR},
     Win32::{
         Foundation::*,
-        UI::{Shell::*, WindowsAndMessaging::*},
         Graphics::Gdi::*,
-        System::{LibraryLoader::*, Console::*},
+        System::{Console::*, LibraryLoader::*},
+        UI::{Shell::*, WindowsAndMessaging::*},
     },
 };
 
@@ -98,12 +100,13 @@ impl DiscordPresenceManager {
 
     async fn connect(&mut self) -> StdResult<(), String> {
         self.last_connection_attempt = SystemTime::now();
-        
+
         let mut client = DiscordIpcClient::new(&self.app_id)
             .map_err(|e| format!("Error creando cliente Discord: {}", e))?;
-        client.connect()
+        client
+            .connect()
             .map_err(|e| format!("Error conectando a Discord: {}", e))?;
-        
+
         log_info("Discord RPC conectado exitosamente!");
         self.client = Some(client);
         self.is_connected = true;
@@ -162,19 +165,19 @@ impl DiscordPresenceManager {
             if let Some(large_image) = &activity_config.large_image {
                 let mut assets = discord_rich_presence::activity::Assets::new();
                 assets = assets.large_image(large_image);
-                
+
                 if let Some(large_text) = &activity_config.large_text {
                     assets = assets.large_text(large_text);
                 }
-                
+
                 if let Some(small_image) = &activity_config.small_image {
                     assets = assets.small_image(small_image);
-                    
+
                     if let Some(small_text) = &activity_config.small_text {
                         assets = assets.small_text(small_text);
                     }
                 }
-                
+
                 activity = activity.assets(assets);
             }
 
@@ -184,7 +187,7 @@ impl DiscordPresenceManager {
                     .iter()
                     .map(|btn| discord_rich_presence::activity::Button::new(&btn.label, &btn.url))
                     .collect();
-                
+
                 activity = activity.buttons(discord_buttons);
             }
 
@@ -229,14 +232,17 @@ impl DiscordPresenceManager {
         if self.current_activity_index >= self.activities.len() {
             self.current_activity_index = 0;
         }
-        log_info(&format!("🔄 Actividades recargadas: {} disponibles", self.activities.len()));
+        log_info(&format!(
+            "🔄 Actividades recargadas: {} disponibles",
+            self.activities.len()
+        ));
     }
 
     fn get_status(&self) -> String {
         if self.activities.is_empty() {
             return "❌ Sin actividades configuradas".to_string();
         }
-        
+
         let current = &self.activities[self.current_activity_index];
         format!(
             "📊 Actividad actual: {} ({}/{}) - {}",
@@ -249,7 +255,8 @@ impl DiscordPresenceManager {
 
     async fn clear_activity(&mut self) -> StdResult<(), String> {
         if let Some(client) = &mut self.client {
-            client.clear_activity()
+            client
+                .clear_activity()
                 .map_err(|e| format!("Error limpiando actividad: {}", e))?;
             log_info("Actividad de Discord limpiada");
         }
@@ -274,26 +281,26 @@ fn get_app_data_dir() -> StdResult<PathBuf, String> {
             return Ok(app_dir);
         }
     }
-    
+
     // Fallback para otros sistemas o si APPDATA no existe
     if let Ok(home) = env::var("HOME") {
         let app_dir = PathBuf::from(home).join(".lorianworkspace");
         return Ok(app_dir);
     }
-    
+
     // Último fallback - directorio actual
     Ok(PathBuf::from("."))
 }
 
 fn ensure_app_data_dir_exists() -> StdResult<PathBuf, String> {
     let app_dir = get_app_data_dir()?;
-    
+
     if !app_dir.exists() {
         fs::create_dir_all(&app_dir)
             .map_err(|e| format!("Error creando directorio {}: {}", app_dir.display(), e))?;
         println!("📁 Creado directorio: {}", app_dir.display());
     }
-    
+
     Ok(app_dir)
 }
 
@@ -317,9 +324,9 @@ fn get_default_config() -> Config {
                             url: "https://example.com/commissions".to_string(),
                         },
                         ButtonConfig {
-                            label: "🎨 Portfolio".to_string(), 
+                            label: "🎨 Portfolio".to_string(),
                             url: "https://example.com/portfolio".to_string(),
-                        }
+                        },
                     ]),
                 },
                 ActivityConfig {
@@ -331,12 +338,10 @@ fn get_default_config() -> Config {
                     small_image: Some("talk_1".to_string()),
                     small_text: Some("Focused".to_string()),
                     duration_seconds: 5,
-                    buttons: Some(vec![
-                        ButtonConfig {
-                            label: "📞 Contact Me".to_string(),
-                            url: "https://example.com/contact".to_string(),
-                        }
-                    ]),
+                    buttons: Some(vec![ButtonConfig {
+                        label: "📞 Contact Me".to_string(),
+                        url: "https://example.com/contact".to_string(),
+                    }]),
                 },
                 ActivityConfig {
                     name: "chatting".to_string(),
@@ -355,7 +360,7 @@ fn get_default_config() -> Config {
                         ButtonConfig {
                             label: "📋 My Services".to_string(),
                             url: "https://example.com/services".to_string(),
-                        }
+                        },
                     ]),
                 },
                 ActivityConfig {
@@ -367,12 +372,10 @@ fn get_default_config() -> Config {
                     small_image: Some("thanks".to_string()),
                     small_text: Some("Grateful".to_string()),
                     duration_seconds: 2,
-                    buttons: Some(vec![
-                        ButtonConfig {
-                            label: "🖼️ See Latest Work".to_string(),
-                            url: "https://example.com/latest".to_string(),
-                        }
-                    ]),
+                    buttons: Some(vec![ButtonConfig {
+                        label: "🖼️ See Latest Work".to_string(),
+                        url: "https://example.com/latest".to_string(),
+                    }]),
                 },
                 ActivityConfig {
                     name: "confused".to_string(),
@@ -383,12 +386,10 @@ fn get_default_config() -> Config {
                     small_image: Some("talk_3".to_string()),
                     small_text: Some("Brainstorming".to_string()),
                     duration_seconds: 3,
-                    buttons: Some(vec![
-                        ButtonConfig {
-                            label: "💡 Suggest Ideas".to_string(),
-                            url: "https://example.com/suggestions".to_string(),
-                        }
-                    ]),
+                    buttons: Some(vec![ButtonConfig {
+                        label: "💡 Suggest Ideas".to_string(),
+                        url: "https://example.com/suggestions".to_string(),
+                    }]),
                 },
                 ActivityConfig {
                     name: "cute_mode".to_string(),
@@ -407,11 +408,11 @@ fn get_default_config() -> Config {
                         ButtonConfig {
                             label: "😸 More Cute Stuff".to_string(),
                             url: "https://example.com/cute".to_string(),
-                        }
+                        },
                     ]),
-                }
+                },
             ],
-        }
+        },
     }
 }
 
@@ -419,35 +420,43 @@ fn create_default_config_file(config_path: &Path) -> StdResult<(), String> {
     let default_config = get_default_config();
     let config_json = serde_json::to_string_pretty(&default_config)
         .map_err(|e| format!("Error serializando configuración default: {}", e))?;
-    
+
     fs::write(config_path, config_json)
         .map_err(|e| format!("Error escribiendo archivo de configuración: {}", e))?;
-    
-    log_info(&format!("📝 Creado archivo de configuración default: {}", config_path.display()));
+
+    log_info(&format!(
+        "📝 Creado archivo de configuración default: {}",
+        config_path.display()
+    ));
     Ok(())
 }
 
 fn load_config() -> StdResult<Config, String> {
     let app_dir = ensure_app_data_dir_exists()?;
     let config_path = app_dir.join("config.json");
-    
+
     // Si no existe el config, crear uno por defecto
     if !config_path.exists() {
         log_info("🆕 Primera ejecución - creando configuración default...");
         create_default_config_file(&config_path)?;
-        log_info(&format!("📍 Configuración guardada en: {}", config_path.display()));
+        log_info(&format!(
+            "📍 Configuración guardada en: {}",
+            config_path.display()
+        ));
         log_info("💡 Puedes editar este archivo para personalizar tu app");
     }
-    
+
     let config_content = fs::read_to_string(&config_path)
         .map_err(|e| format!("Error leyendo {}: {}", config_path.display(), e))?;
     let config: Config = serde_json::from_str(&config_content)
         .map_err(|e| format!("Error parseando JSON en {}: {}", config_path.display(), e))?;
-    
+
     Ok(config)
 }
 
-fn setup_file_watcher(command_sender: Sender<AppCommand>) -> StdResult<RecommendedWatcher, notify::Error> {
+fn setup_file_watcher(
+    command_sender: Sender<AppCommand>,
+) -> StdResult<RecommendedWatcher, notify::Error> {
     let mut watcher = RecommendedWatcher::new(
         move |res: StdResult<Event, notify::Error>| {
             match res {
@@ -473,16 +482,22 @@ fn setup_file_watcher(command_sender: Sender<AppCommand>) -> StdResult<Recommend
     match get_app_data_dir() {
         Ok(app_dir) => {
             watcher.watch(&app_dir, RecursiveMode::NonRecursive)?;
-            log_info(&format!("👁️  File watcher iniciado para: {}", app_dir.join("config.json").display()));
+            log_info(&format!(
+                "👁️  File watcher iniciado para: {}",
+                app_dir.join("config.json").display()
+            ));
         }
         Err(e) => {
-            log_error(&format!("⚠️  Error obteniendo directorio de AppData: {}", e));
+            log_error(&format!(
+                "⚠️  Error obteniendo directorio de AppData: {}",
+                e
+            ));
             // Fallback al directorio actual
             watcher.watch(Path::new("."), RecursiveMode::NonRecursive)?;
             log_info("👁️  File watcher iniciado en directorio actual");
         }
     }
-    
+
     Ok(watcher)
 }
 
@@ -522,9 +537,9 @@ mod tray {
             unsafe {
                 // Almacenar el command_sender globalmente para usar en window_proc
                 GLOBAL_COMMAND_SENDER = Some(command_sender.clone());
-                
+
                 let instance = GetModuleHandleW(None)?;
-                
+
                 let window_class = WNDCLASSEXW {
                     cbSize: size_of::<WNDCLASSEXW>() as u32,
                     style: CS_HREDRAW | CS_VREDRAW,
@@ -571,19 +586,18 @@ mod tray {
 
         unsafe fn add_tray_icon(&self) -> windows::core::Result<()> {
             log_info("Intentando crear icono del system tray...");
-            
+
             // Intentar cargar icono personalizado del ejecutable, o usar uno por defecto
             let icon = if let Ok(module) = GetModuleHandleW(None) {
                 // Intentar cargar icono ID 1 del ejecutable
-                LoadIconW(module, PCWSTR(1 as *const u16))
-                    .unwrap_or_else(|_| {
-                        // Fallback a icono sistema si no se encuentra el personalizado
-                        LoadIconW(None, IDI_INFORMATION).unwrap_or_default()
-                    })
+                LoadIconW(module, PCWSTR(1 as *const u16)).unwrap_or_else(|_| {
+                    // Fallback a icono sistema si no se encuentra el personalizado
+                    LoadIconW(None, IDI_INFORMATION).unwrap_or_default()
+                })
             } else {
                 LoadIconW(None, IDI_INFORMATION).unwrap_or_default()
             };
-            
+
             let mut nid = NOTIFYICONDATAW {
                 cbSize: size_of::<NOTIFYICONDATAW>() as u32,
                 hWnd: self.hwnd,
@@ -606,29 +620,54 @@ mod tray {
             } else {
                 log_error("❌ Fallo al crear icono del system tray");
             }
-            
+
             Ok(())
         }
 
         unsafe fn show_context_menu(&self, is_paused: bool) {
             let hmenu = CreatePopupMenu().unwrap();
-            
+
             // Control de reproducción
             if is_paused {
                 AppendMenuW(hmenu, MF_STRING, ID_MENU_RESUME as usize, w!("▶️ Reanudar"));
             } else {
                 AppendMenuW(hmenu, MF_STRING, ID_MENU_PAUSE as usize, w!("⏸️ Pausar"));
             }
-            AppendMenuW(hmenu, MF_STRING, ID_MENU_NEXT as usize, w!("⏭️ Siguiente Actividad"));
-            
+            AppendMenuW(
+                hmenu,
+                MF_STRING,
+                ID_MENU_NEXT as usize,
+                w!("⏭️ Siguiente Actividad"),
+            );
+
             AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-            
+
             // Configuración y utilidades
-            AppendMenuW(hmenu, MF_STRING, ID_MENU_TOGGLE_CONSOLE as usize, w!("💻 Mostrar/Ocultar Consola"));
-            AppendMenuW(hmenu, MF_STRING, ID_MENU_OPEN_CONFIG as usize, w!("📝 Abrir Configuración"));
-            AppendMenuW(hmenu, MF_STRING, ID_MENU_RELOAD as usize, w!("🔄 Recargar Config"));
-            AppendMenuW(hmenu, MF_STRING, ID_MENU_STATUS as usize, w!("📊 Ver Estado"));
-            
+            AppendMenuW(
+                hmenu,
+                MF_STRING,
+                ID_MENU_TOGGLE_CONSOLE as usize,
+                w!("💻 Mostrar/Ocultar Consola"),
+            );
+            AppendMenuW(
+                hmenu,
+                MF_STRING,
+                ID_MENU_OPEN_CONFIG as usize,
+                w!("📝 Abrir Configuración"),
+            );
+            AppendMenuW(
+                hmenu,
+                MF_STRING,
+                ID_MENU_RELOAD as usize,
+                w!("🔄 Recargar Config"),
+            );
+            AppendMenuW(
+                hmenu,
+                MF_STRING,
+                ID_MENU_STATUS as usize,
+                w!("📊 Ver Estado"),
+            );
+
             AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
             AppendMenuW(hmenu, MF_STRING, ID_MENU_EXIT as usize, w!("❌ Salir"));
 
@@ -636,7 +675,7 @@ mod tray {
             GetCursorPos(&mut pt);
 
             SetForegroundWindow(self.hwnd);
-            
+
             let cmd = TrackPopupMenu(
                 hmenu,
                 TPM_RIGHTBUTTON | TPM_RETURNCMD,
@@ -699,31 +738,69 @@ mod tray {
             match msg {
                 WM_TRAYICON => {
                     let event = loword(lparam.0 as u32) as u32;
-                    log_info(&format!("Evento del tray recibido en window_proc: {}", event));
-                    
+                    log_info(&format!(
+                        "Evento del tray recibido en window_proc: {}",
+                        event
+                    ));
+
                     match event {
                         WM_RBUTTONUP => {
                             log_info("Click derecho en tray - enviando comando para mostrar menú");
                             // Click derecho - mostrar menú contextual
                             if let Some(sender) = &GLOBAL_COMMAND_SENDER {
                                 let _ = sender.send(AppCommand::ShowStatus);
-                                
+
                                 // Crear menú contextual inmediatamente
                                 let hmenu = CreatePopupMenu().unwrap();
-                                AppendMenuW(hmenu, MF_STRING, ID_MENU_PAUSE as usize, w!("⏸️ Pausar/Reanudar"));
-                                AppendMenuW(hmenu, MF_STRING, ID_MENU_NEXT as usize, w!("⏭️ Siguiente Actividad"));
+                                AppendMenuW(
+                                    hmenu,
+                                    MF_STRING,
+                                    ID_MENU_PAUSE as usize,
+                                    w!("⏸️ Pausar/Reanudar"),
+                                );
+                                AppendMenuW(
+                                    hmenu,
+                                    MF_STRING,
+                                    ID_MENU_NEXT as usize,
+                                    w!("⏭️ Siguiente Actividad"),
+                                );
                                 AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-                                AppendMenuW(hmenu, MF_STRING, ID_MENU_TOGGLE_CONSOLE as usize, w!("💻 Mostrar Consola"));
-                                AppendMenuW(hmenu, MF_STRING, ID_MENU_OPEN_CONFIG as usize, w!("📝 Abrir Config"));
-                                AppendMenuW(hmenu, MF_STRING, ID_MENU_RELOAD as usize, w!("🔄 Recargar"));
-                                AppendMenuW(hmenu, MF_STRING, ID_MENU_STATUS as usize, w!("📊 Estado"));
+                                AppendMenuW(
+                                    hmenu,
+                                    MF_STRING,
+                                    ID_MENU_TOGGLE_CONSOLE as usize,
+                                    w!("💻 Mostrar Consola"),
+                                );
+                                AppendMenuW(
+                                    hmenu,
+                                    MF_STRING,
+                                    ID_MENU_OPEN_CONFIG as usize,
+                                    w!("📝 Abrir Config"),
+                                );
+                                AppendMenuW(
+                                    hmenu,
+                                    MF_STRING,
+                                    ID_MENU_RELOAD as usize,
+                                    w!("🔄 Recargar"),
+                                );
+                                AppendMenuW(
+                                    hmenu,
+                                    MF_STRING,
+                                    ID_MENU_STATUS as usize,
+                                    w!("📊 Estado"),
+                                );
                                 AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-                                AppendMenuW(hmenu, MF_STRING, ID_MENU_EXIT as usize, w!("❌ Salir"));
+                                AppendMenuW(
+                                    hmenu,
+                                    MF_STRING,
+                                    ID_MENU_EXIT as usize,
+                                    w!("❌ Salir"),
+                                );
 
                                 let mut pt = POINT { x: 0, y: 0 };
                                 GetCursorPos(&mut pt);
                                 SetForegroundWindow(hwnd);
-                                
+
                                 let cmd = TrackPopupMenu(
                                     hmenu,
                                     TPM_RIGHTBUTTON | TPM_RETURNCMD,
@@ -806,15 +883,15 @@ mod tray {
 #[cfg(not(windows))]
 mod tray {
     use super::*;
-    
+
     pub struct SystemTray;
-    
+
     impl SystemTray {
         pub fn new(_: Sender<AppCommand>) -> Result<Self, Box<dyn std::error::Error>> {
             println!("⚠️  System tray no disponible en esta plataforma");
             Ok(SystemTray)
         }
-        
+
         pub fn run_message_loop(&self, _: Arc<Mutex<AppState>>) {
             // No-op para plataformas no Windows
         }
@@ -907,7 +984,7 @@ fn open_config_file() {
                     windows::core::PCWSTR(path_wide.as_ptr()),
                     None,
                     None,
-                    SW_SHOW
+                    SW_SHOW,
                 );
             }
         }
@@ -937,13 +1014,13 @@ fn log_message(message: &str) {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    
+
     // Formatear timestamp de manera más legible
     let datetime = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(timestamp);
     let timestamp_str = format!("{:?}", datetime);
-    
+
     let log_entry = format!("[{}] {}\n", timestamp_str, message);
-    
+
     // Intentar escribir al archivo de log
     if let Ok(log_path) = get_log_file_path() {
         let _ = fs::OpenOptions::new()
@@ -953,12 +1030,12 @@ fn log_message(message: &str) {
             .open(log_path)
             .and_then(|mut file| file.write_all(log_entry.as_bytes()));
     }
-    
+
     // NO imprimir a stdout en subsystem windows para evitar problemas de consola
     #[cfg(not(windows))]
     {
-    print!("{}", log_entry);
-    let _ = io::stdout().flush();
+        print!("{}", log_entry);
+        let _ = io::stdout().flush();
     }
 }
 
@@ -975,7 +1052,7 @@ async fn main() -> StdResult<(), String> {
     log_info("🚀 Iniciando Lorian Workspace...");
     log_info("📦 Iniciando en modo background sin consola");
     log_info("💡 Usa el icono del system tray para controlar la app");
-    
+
     // Como es una app de Windows sin consola, no necesitamos ocultar nada
 
     // Cargar configuración desde config.json
@@ -983,7 +1060,9 @@ async fn main() -> StdResult<(), String> {
         Ok(cfg) => cfg,
         Err(e) => {
             log_error(&format!("❌ Error cargando config.json: {}", e));
-            log_error("💡 Asegúrate de que el archivo config.json exista y tenga el formato correcto");
+            log_error(
+                "💡 Asegúrate de que el archivo config.json exista y tenga el formato correcto",
+            );
             return Err(e.into());
         }
     };
@@ -993,15 +1072,26 @@ async fn main() -> StdResult<(), String> {
         return Ok(());
     }
 
-    log_info(&format!("📋 Cargadas {} actividades desde config.json", config.discord.activities.len()));
+    log_info(&format!(
+        "📋 Cargadas {} actividades desde config.json",
+        config.discord.activities.len()
+    ));
     for (i, activity) in config.discord.activities.iter().enumerate() {
-        log_info(&format!("   {}. {} - {} segundos", i + 1, activity.name, activity.duration_seconds));
+        log_info(&format!(
+            "   {}. {} - {} segundos",
+            i + 1,
+            activity.name,
+            activity.duration_seconds
+        ));
     }
-    
+
     // Mostrar ubicación del archivo de configuración
     if let Ok(app_dir) = get_app_data_dir() {
         let config_path = app_dir.join("config.json");
-        log_info(&format!("📁 Archivo de configuración: {}", config_path.display()));
+        log_info(&format!(
+            "📁 Archivo de configuración: {}",
+            config_path.display()
+        ));
         log_info("💡 Edita este archivo para personalizar tus actividades");
     }
 
@@ -1016,11 +1106,12 @@ async fn main() -> StdResult<(), String> {
     }));
 
     // Canal de comandos para el system tray
-    let (command_sender, command_receiver): (Sender<AppCommand>, Receiver<AppCommand>) = unbounded();
+    let (command_sender, command_receiver): (Sender<AppCommand>, Receiver<AppCommand>) =
+        unbounded();
 
     // Configurar aplicación
     setup_app()?;
-    
+
     // Conectar a Discord
     {
         let mut manager = discord_manager.lock().await;
@@ -1043,11 +1134,10 @@ async fn main() -> StdResult<(), String> {
 
     // Inicializar System Tray
     log_info("Iniciando System Tray...");
-    let _tray = tray::SystemTray::new(command_sender.clone())
-        .map_err(|e| {
-            log_error(&format!("Error iniciando system tray: {}", e));
-            format!("Error iniciando system tray: {}", e)
-        })?;
+    let _tray = tray::SystemTray::new(command_sender.clone()).map_err(|e| {
+        log_error(&format!("Error iniciando system tray: {}", e));
+        format!("Error iniciando system tray: {}", e)
+    })?;
     log_info("🖱️  System Tray iniciado - busca el icono en la bandeja del sistema");
     log_info("💡 Click derecho en el icono para ver opciones");
 
@@ -1067,9 +1157,13 @@ async fn main() -> StdResult<(), String> {
             let (duration, is_paused, is_connected) = {
                 let manager = discord_manager_clone.lock().await;
                 let state = app_state_clone.lock().await;
-                (manager.get_current_activity_duration(), state.is_paused, manager.is_connection_alive())
+                (
+                    manager.get_current_activity_duration(),
+                    state.is_paused,
+                    manager.is_connection_alive(),
+                )
             };
-            
+
             // Si no está conectado, intentar reconectar
             if !is_connected {
                 let mut manager = discord_manager_clone.lock().await;
@@ -1081,10 +1175,10 @@ async fn main() -> StdResult<(), String> {
                     continue;
                 }
             }
-            
+
             // Esperar la duración especificada para la actividad actual
             tokio::time::sleep(tokio::time::Duration::from_secs(duration)).await;
-            
+
             // Solo cambiar actividad si no está pausado y está conectado
             if !is_paused {
                 let mut manager = discord_manager_clone.lock().await;
@@ -1127,11 +1221,13 @@ async fn main() -> StdResult<(), String> {
                             if manager.try_reconnect().await {
                                 log_info("🔗 Reconectado antes de cambiar actividad");
                             } else {
-                                log_error("❌ No se puede cambiar actividad - Discord no está conectado");
+                                log_error(
+                                    "❌ No se puede cambiar actividad - Discord no está conectado",
+                                );
                                 continue;
                             }
                         }
-                        
+
                         manager.next_activity();
                         if let Err(e) = manager.set_current_activity().await {
                             log_error(&format!("⚠️  Error cambiando actividad: {}", e));
@@ -1142,7 +1238,7 @@ async fn main() -> StdResult<(), String> {
                     AppCommand::ReloadConfig => {
                         // Pequeño delay para evitar múltiples recargas rápidas
                         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        
+
                         let config_result = load_config();
                         match config_result {
                             Ok(new_config) => {
@@ -1150,11 +1246,17 @@ async fn main() -> StdResult<(), String> {
                                 let old_count = manager.activities.len();
                                 manager.reload_activities(new_config.discord.activities);
                                 let new_count = manager.activities.len();
-                                
+
                                 if let Err(e) = manager.set_current_activity().await {
-                                    log_error(&format!("⚠️  Error aplicando nueva configuración: {}", e));
+                                    log_error(&format!(
+                                        "⚠️  Error aplicando nueva configuración: {}",
+                                        e
+                                    ));
                                 } else {
-                                    log_info(&format!("🔄 Configuración recargada: {} → {} actividades", old_count, new_count));
+                                    log_info(&format!(
+                                        "🔄 Configuración recargada: {} → {} actividades",
+                                        old_count, new_count
+                                    ));
                                     log_info("✨ Cambios aplicados automáticamente");
                                 }
                             }
@@ -1169,10 +1271,27 @@ async fn main() -> StdResult<(), String> {
                         let state = app_state_clone2.lock().await;
                         log_info("📊 === Estado de la Aplicación ===");
                         log_info(&manager.get_status());
-                        log_info(&format!("⏸️  Rotación: {}", if state.is_paused { "Pausada" } else { "Activa" }));
-                        log_info(&format!("🔗 Conexión: {}", if manager.is_connection_alive() { "✅ Conectado" } else { "❌ Desconectado" }));
-                        log_info(&format!("📱 App: {}", if state.is_running { "🟢 Funcionando" } else { "🔴 Cerrando" }));
-                        
+                        log_info(&format!(
+                            "⏸️  Rotación: {}",
+                            if state.is_paused { "Pausada" } else { "Activa" }
+                        ));
+                        log_info(&format!(
+                            "🔗 Conexión: {}",
+                            if manager.is_connection_alive() {
+                                "✅ Conectado"
+                            } else {
+                                "❌ Desconectado"
+                            }
+                        ));
+                        log_info(&format!(
+                            "📱 App: {}",
+                            if state.is_running {
+                                "🟢 Funcionando"
+                            } else {
+                                "🔴 Cerrando"
+                            }
+                        ));
+
                         // Mostrar ubicación del config
                         if let Ok(app_dir) = get_app_data_dir() {
                             let config_path = app_dir.join("config.json");
@@ -1210,14 +1329,14 @@ async fn main() -> StdResult<(), String> {
                 break; // WM_QUIT recibido
             }
         }
-        
+
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         let state = app_state.lock().await;
         if !state.is_running {
             break;
         }
     }
-    
+
     log_info("🛑 Limpiando recursos...");
     let mut manager = discord_manager.lock().await;
     let _ = manager.clear_activity().await;

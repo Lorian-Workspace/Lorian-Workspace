@@ -1,0 +1,73 @@
+name: Quick Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  quick-build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+        target: x86_64-pc-windows-gnu
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-quick-release-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Format code (non-blocking)
+      run: cargo fmt --all
+      continue-on-error: true
+    
+    - name: Build executable
+      run: cargo build --release --target x86_64-pc-windows-gnu
+    
+    - name: Create release package
+      run: |
+        mkdir release
+        copy target\x86_64-pc-windows-gnu\release\lorianworkspace.exe release\
+        copy README.md release\
+        copy LICENSE release\
+        echo ${{ github.event.inputs.version }} > release\version.txt
+        7z a lorianworkspace-${{ github.event.inputs.version }}-windows.zip release\*
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event.inputs.version }}
+        name: "Lorian Workspace ${{ github.event.inputs.version }}"
+        files: |
+          lorianworkspace-${{ github.event.inputs.version }}-windows.zip
+        draft: false
+        prerelease: false
+        body: |
+          🚀 Quick release of Lorian Workspace
+          
+          ## What's included:
+          - `lorianworkspace.exe` - Main executable
+          - Configuration templates
+          - License and documentation
+          
+          ## Installation:
+          1. Download and extract the ZIP file
+          2. Run `lorianworkspace.exe`
+          3. Configure via system tray
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
