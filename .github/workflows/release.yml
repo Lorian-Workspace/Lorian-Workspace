@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+        target: x86_64-pc-windows-gnu
+    
+    - name: Build release
+      run: cargo build --release --target x86_64-pc-windows-gnu
+    
+    - name: Create release archive
+      run: |
+        mkdir release
+        copy target\x86_64-pc-windows-gnu\release\lorianworkspace.exe release\
+        copy README.md release\
+        copy LICENSE release\
+        copy icon.ico release\
+        7z a lorianworkspace-${{ github.ref_name }}-windows.zip release\*
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          lorianworkspace-${{ github.ref_name }}-windows.zip
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
