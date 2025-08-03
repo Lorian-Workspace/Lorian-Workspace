@@ -65,12 +65,39 @@ git push
 
 📖 **Detailed guide**: See [AUTO_RELEASE_GUIDE.md](AUTO_RELEASE_GUIDE.md) for complete instructions.
 
+## 📋 Logging System
+
+Lorian Workspace includes an intelligent logging system:
+
+### Features
+- **📝 Automatic logging** to `%APPDATA%/lorianworkspace/app.log`
+- **🔄 Auto-rotation** when log file exceeds 5MB (old logs are deleted)
+- **📊 Size monitoring** displayed on startup
+- **🚫 No backup files** - keeps storage clean and minimal
+
+### Log Information
+- All Discord Rich Presence activities and errors
+- Connection status and reconnection attempts  
+- Configuration changes and hot reloads
+- Button configuration details and debugging info
+- System tray interactions and commands
+
+### Example Log Output
+```
+[2024-01-15 10:30:15] 🚀 Iniciando Lorian Workspace...
+[2024-01-15 10:30:15] 📝 Logs guardados en: C:\Users\User\AppData\Roaming\lorianworkspace\app.log
+[2024-01-15 10:30:15] 🔄 Rotación automática: logs se borran al superar 5MB
+[2024-01-15 10:30:15] 📊 Tamaño actual del log: 2.34MB
+[2024-01-15 10:30:16] ✅ Discord RPC conectado exitosamente!
+[2024-01-15 10:30:16] 🔘 Configurando 2 botones para la actividad
+```
+
 ## 🔧 Configuration
 
 The application automatically creates configuration files in `%APPDATA%/lorianworkspace/`:
 
 - `config.json` - Main configuration file
-- `app.log` - Application logs for troubleshooting
+- `app.log` - Application logs (auto-rotated when >5MB)
 
 ### Setting up Discord Application
 

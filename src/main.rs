@@ -1046,8 +1046,20 @@ fn log_message(message: &str) {
 
     let log_entry = format!("[{}] {}\n", timestamp_str, message);
 
-    // Intentar escribir al archivo de log
+    // Escribir al archivo de log con rotación automática
     if let Ok(log_path) = get_log_file_path() {
+        // Verificar tamaño del archivo antes de escribir
+        if let Ok(metadata) = fs::metadata(&log_path) {
+            // Si el archivo existe y es mayor a 5MB (5,242,880 bytes), borrarlo
+            if metadata.len() > 5_242_880 {
+                let _ = fs::remove_file(&log_path);
+                // Escribir mensaje de rotación en el nuevo archivo
+                let rotation_msg = format!("[{}] 🔄 Log rotado - archivo anterior borrado (>5MB)\n", timestamp_str);
+                let _ = fs::write(&log_path, rotation_msg);
+            }
+        }
+
+        // Escribir el mensaje actual
         let _ = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1078,6 +1090,20 @@ async fn main() -> StdResult<(), String> {
     log_info("📦 Iniciando en modo background sin consola");
     log_info("💡 Usa el icono del system tray para controlar la app");
     log_info("");
+    
+    // Mostrar información sobre el sistema de logs
+    if let Ok(log_path) = get_log_file_path() {
+        log_info(&format!("📝 Logs guardados en: {}", log_path.display()));
+        log_info("🔄 Rotación automática: logs se borran al superar 5MB");
+        
+        // Mostrar tamaño actual del log si existe
+        if let Ok(metadata) = fs::metadata(&log_path) {
+            let size_mb = metadata.len() as f64 / 1_048_576.0;
+            log_info(&format!("📊 Tamaño actual del log: {:.2}MB", size_mb));
+        }
+    }
+    log_info("");
+    
     log_info("🚨 INFORMACIÓN IMPORTANTE SOBRE BOTONES:");
     log_info("   • Discord tiene un BUG: NO puedes ver tus propios botones");
     log_info("   • Los botones SÍ aparecen para otros usuarios que vean tu perfil");
