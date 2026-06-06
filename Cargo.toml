@@ -7,8 +7,6 @@ edition = "2021"
 name = "lorianworkspace"
 path = "src/main.rs"
 
-# Para Windows: crear aplicación de ventana sin consola
-
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 discord-rich-presence = "0.2.5"
@@ -17,17 +15,13 @@ serde_json = "1.0"
 notify = "6.0"
 crossbeam-channel = "0.5"
 
-[build-dependencies]
-winres = "0.1"
-
 [features]
-default = ["windows-tray"]
 windows-tray = ["windows"]
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
-    "Win32_System_LibraryLoader", 
+    "Win32_System_LibraryLoader",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
@@ -36,3 +30,6 @@ windows = { version = "0.58", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_Console",
 ], optional = true }
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"

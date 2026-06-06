@@ -5,9 +5,10 @@
 [![Release](https://github.com/tu-usuario/Lorian-Workspace/workflows/Release/badge.svg)](https://github.com/tu-usuario/Lorian-Workspace/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-stable-brightgreen.svg)](https://www.rust-lang.org)
-[![Windows](https://img.shields.io/badge/platform-Windows-blue.svg)](https://www.microsoft.com/windows)
+| [![Linux](https://img.shields.io/badge/platform-Linux-green.svg)](https://www.linux.org)
+| [![Windows](https://img.shields.io/badge/platform-Windows-blue.svg)](https://www.microsoft.com/windows)
 
-**A comprehensive background application suite for content creators and developers.**
+**A cross-platform Discord Rich Presence rotator with automatic activity cycling.**
 
 ## 🚀 Features
 
@@ -15,8 +16,8 @@
 - **Automatic activity rotation** with customizable intervals
 - **Rich presence display** with custom images, buttons, and status messages  
 - **Hot reload configuration** - edit settings without restarting
-- **System tray integration** for seamless background operation
-- **No console window** - truly invisible background application
+- **System tray integration** (Windows) / **CLI stdin control** (Linux)
+- **No console window** on Windows / **Foreground CLI** on Linux
 - **Intelligent reconnection** handling for Discord client restarts
 
 ### ⚙️ System Integration
@@ -33,11 +34,30 @@
 - Discord Developer Account (for custom application setup)
 
 ### Quick Start
+
+**Windows:**
 1. Download the latest release from [Releases](../../releases)
 2. Extract `lorianworkspace.exe` to your desired location
 3. Run the application - it will create default configuration files
 4. Configure your Discord Application ID and activities
 5. Enjoy automated Discord Rich Presence!
+
+**Linux (build from source):**
+```bash
+# Prerequisites: Rust toolchain (rustup, cargo)
+git clone https://github.com/Lorian-Workspace/Lorian-Workspace.git
+cd Lorian-Workspace
+cargo build --release
+./target/release/lorianworkspace
+
+# Optional: install to ~/.local/bin/
+cp target/release/lorianworkspace ~/.local/bin/
+```
+
+On Linux, the app runs as a foreground CLI. Available commands at the prompt:
+`pause`, `resume`, `next`, `status`, `reload`, `exit`
+
+Configuration is stored at `~/.lorianworkspace/config.json`.
 
 ## 🤖 Automatic Releases
 
