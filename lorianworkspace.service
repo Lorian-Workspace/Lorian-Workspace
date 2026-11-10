@@ -1,0 +1,13 @@
+[Unit]
+Description=Lorian Workspace — Discord Rich Presence Rotator
+After=network.target
+Wants=discord.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/lorianworkspace --daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

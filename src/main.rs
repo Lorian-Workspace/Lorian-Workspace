@@ -16,6 +16,11 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
+#[cfg(not(windows))]
+use std::os::fd::AsRawFd;
+#[cfg(not(windows))]
+use std::process;
+
 #[cfg(windows)]
 use windows::{
     core::{w, PCWSTR},
@@ -111,14 +116,17 @@ impl DiscordPresenceManager {
     pub async fn connect(&mut self) -> StdResult<(), String> {
         self.last_connection_attempt = SystemTime::now();
 
-        let mut client = DiscordIpcClient::new(&self.app_id)
-            .map_err(|e| format!("Error creando cliente Discord: {}", e))?;
-        client
-            .connect()
-            .map_err(|e| format!("Error conectando a Discord: {}", e))?;
+        let app_id = self.app_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut client = DiscordIpcClient::new(&app_id);
+            client.connect().map_err(|e| format!("Error conectando a Discord: {}", e))?;
+            Ok::<_, String>(client)
+        })
+        .await
+        .map_err(|e| format!("Error en thread blocking: {}", e))??;
 
         log_info("Discord RPC conectado exitosamente!");
-        self.client = Some(client);
+        self.client = Some(result);
         self.is_connected = true;
         Ok(())
     }
@@ -151,67 +159,73 @@ impl DiscordPresenceManager {
     }
 
     pub async fn set_current_activity(&mut self) -> StdResult<(), String> {
-        if let Some(client) = &mut self.client {
-            if self.activities.is_empty() {
-                return Ok(());
+        if self.activities.is_empty() {
+            return Ok(());
+        }
+
+        let activity_config = &self.activities[self.current_activity_index];
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut activity_builder = activity::Activity::new()
+            .details(&activity_config.details)
+            .state(&activity_config.state)
+            .timestamps(activity::Timestamps::new().start(timestamp as i64));
+
+        if let Some(large_image) = &activity_config.large_image {
+            let mut assets = activity::Assets::new().large_image(large_image);
+
+            if let Some(large_text) = &activity_config.large_text {
+                assets = assets.large_text(large_text);
             }
 
-            let activity_config = &self.activities[self.current_activity_index];
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            if let Some(small_image) = &activity_config.small_image {
+                assets = assets.small_image(small_image);
 
-            let mut activity_builder = activity::Activity::new()
-                .details(&activity_config.details)
-                .state(&activity_config.state)
-                .timestamps(activity::Timestamps::new().start(timestamp as i64));
-
-            if let Some(large_image) = &activity_config.large_image {
-                let mut assets = activity::Assets::new().large_image(large_image);
-
-                if let Some(large_text) = &activity_config.large_text {
-                    assets = assets.large_text(large_text);
+                if let Some(small_text) = &activity_config.small_text {
+                    assets = assets.small_text(small_text);
                 }
-
-                if let Some(small_image) = &activity_config.small_image {
-                    assets = assets.small_image(small_image);
-
-                    if let Some(small_text) = &activity_config.small_text {
-                        assets = assets.small_text(small_text);
-                    }
-                }
-
-                activity_builder = activity_builder.assets(assets);
             }
 
-            let activity = if let Some(buttons) = &activity_config.buttons {
-                let discord_buttons = buttons
-                    .iter()
-                    .map(|btn| activity::Button::new(&btn.label, &btn.url))
-                    .collect::<Vec<_>>();
+            activity_builder = activity_builder.assets(assets);
+        }
 
-                activity_builder.buttons(discord_buttons)
-            } else {
-                activity_builder
-            };
+        let activity = if let Some(buttons) = &activity_config.buttons {
+            let discord_buttons = buttons
+                .iter()
+                .map(|btn| activity::Button::new(&btn.label, &btn.url))
+                .collect::<Vec<_>>();
 
-            match client.set_activity(activity) {
+            activity_builder.buttons(discord_buttons)
+        } else {
+            activity_builder
+        };
+
+        let activity_name = activity_config.name.clone();
+        let activity_details = activity_config.details.clone();
+        let activity_state = activity_config.state.clone();
+        let activity_duration = activity_config.duration_seconds;
+
+        if let Some(client) = self.client.as_mut() {
+            let result = tokio::task::block_in_place(|| client.set_activity(activity));
+
+            match result {
                 Ok(_) => {
                     self.is_connected = true;
                     log_info(&format!(
                         "🎯 Actividad '{}' activada: {} - {} (por {} segundos)",
-                        activity_config.name,
-                        activity_config.details,
-                        activity_config.state,
-                        activity_config.duration_seconds
+                        activity_name, activity_details, activity_state, activity_duration
                     ));
                 }
                 Err(e) => {
                     let error_msg = format!("Error enviando actividad a Discord: {}", e);
                     log_error(&error_msg);
-                    self.is_connected = false;
-                    self.client = None;
+                    if error_msg.contains("pipe") || error_msg.contains("connection") || error_msg.contains("I/O") {
+                        self.is_connected = false;
+                        self.client = None;
+                    }
                     return Err(error_msg);
                 }
             }
@@ -448,10 +462,10 @@ mod tray {
     }
 
     impl SystemTray {
-        pub fn new(command_sender: Sender<AppCommand>) -> windows::core::Result<Self> {
+        pub fn new(command_sender: Sender<AppCommand>) -> StdResult<Self, String> {
             unsafe {
                 GLOBAL_COMMAND_SENDER = Some(command_sender.clone());
-                let instance = GetModuleHandleW(None)?;
+                let instance = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {}", e))?;
                 let window_class = WNDCLASSEXW {
                     cbSize: size_of::<WNDCLASSEXW>() as u32,
                     style: CS_HREDRAW | CS_VREDRAW,
@@ -459,8 +473,8 @@ mod tray {
                     cbClsExtra: 0,
                     cbWndExtra: 0,
                     hInstance: instance.into(),
-                    hIcon: LoadIconW(None, IDI_APPLICATION)?,
-                    hCursor: LoadCursorW(None, IDC_ARROW)?,
+                    hIcon: LoadIconW(None, IDI_APPLICATION).map_err(|e| format!("LoadIconW: {}", e))?,
+                    hCursor: LoadCursorW(None, IDC_ARROW).map_err(|e| format!("LoadCursorW: {}", e))?,
                     hbrBackground: HBRUSH(std::ptr::null_mut()),
                     lpszMenuName: PCWSTR::null(),
                     lpszClassName: w!("LorianWorkspace"),
@@ -475,9 +489,9 @@ mod tray {
                     CW_USEDEFAULT, CW_USEDEFAULT,
                     CW_USEDEFAULT, CW_USEDEFAULT,
                     None, None, instance, None,
-                )?;
+                ).map_err(|e| format!("CreateWindowExW: {}", e))?;
                 let tray = Self { hwnd, command_sender };
-                tray.add_tray_icon()?;
+                tray.add_tray_icon().map_err(|e| format!("add_tray_icon: {}", e))?;
                 Ok(tray)
             }
         }
@@ -592,7 +606,7 @@ mod tray {
     pub struct SystemTray;
 
     impl SystemTray {
-        pub fn new(_: Sender<AppCommand>) -> StdResult<Self, Box<dyn std::error::Error>> {
+        pub fn new(_command_sender: Sender<AppCommand>) -> StdResult<Self, String> {
             Ok(SystemTray)
         }
     }
@@ -781,48 +795,295 @@ async fn run_stdin_reader(command_sender: Sender<AppCommand>) {
 fn print_help() {
     println!("Lorian Workspace - Discord Rich Presence Rotator");
     println!("");
-    println!("Uso: lorianworkspace [COMANDO]");
+    println!("Uso: lorianworkspace [SUBCOMANDO|OPCIÓN]");
     println!("");
-    println!("Comandos (opcional, para control único):");
-    println!("  --pause, -p       Pausar rotación de actividades");
-    println!("  --resume, -r      Reanudar rotación");
-    println!("  --next, -n        Siguiente actividad");
-    println!("  --status, -s      Mostrar estado actual");
+    println!("Subcomandos (control de daemon):");
+    println!("  start             Iniciar daemon en background");
+    println!("  stop              Detener daemon");
+    println!("  pause             Pausar rotación");
+    println!("  resume            Reanudar rotación");
+    println!("  next              Siguiente actividad");
+    println!("  status            Mostrar estado del daemon");
+    println!("  reload            Recargar configuración");
+    println!("  autostart         Configurar inicio automático");
+    println!("");
+    println!("Opciones:");
+    println!("  --daemon, -d      Correr en modo daemon (background)");
     println!("  --help, -h        Mostrar esta ayuda");
     println!("");
-    println!("Sin argumentos, corre en modo interactivo.");
-    println!("Comandos disponibles en stdin: pause, resume, next, status, reload, exit");
+    println!("Sin argumentos, corre en modo interactivo (foreground).");
+    println!("Comandos stdin: pause, resume, next, status, reload, exit");
 }
 
 #[cfg(windows)]
 fn print_help() {}
 
 // ============================================================
-// Main
+// Daemon helpers (Linux)
 // ============================================================
 
-#[tokio::main]
-async fn main() -> StdResult<(), String> {
-    let args: Vec<String> = env::args().collect();
+#[cfg(not(windows))]
+fn get_pid_path() -> StdResult<PathBuf, String> {
+    let app_dir = get_app_data_dir()?;
+    Ok(app_dir.join("lorianworkspace.pid"))
+}
 
-    // Parse arg for one-shot commands (Linux)
-    #[cfg(not(windows))]
-    {
-        if args.len() > 1 {
-            let oneshot = args[1].as_str();
-            match oneshot {
-                "--help" | "-h" => {
-                    print_help();
-                    return Ok(());
+#[cfg(not(windows))]
+fn get_command_path() -> StdResult<PathBuf, String> {
+    let app_dir = get_app_data_dir()?;
+    Ok(app_dir.join("command"))
+}
+
+#[cfg(not(windows))]
+fn write_pid_file() -> StdResult<(), String> {
+    let pid_path = get_pid_path()?;
+    let pid = process::id().to_string();
+    fs::write(&pid_path, &pid)
+        .map_err(|e| format!("Error escribiendo PID file: {}", e))?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn read_pid() -> StdResult<u32, String> {
+    let pid_path = get_pid_path()?;
+    let content = fs::read_to_string(&pid_path)
+        .map_err(|e| format!("Error leyendo PID file: {}", e))?;
+    content.trim().parse::<u32>()
+        .map_err(|e| format!("PID inválido: {}", e))
+}
+
+#[cfg(not(windows))]
+fn is_daemon_running() -> bool {
+    if let Ok(pid) = read_pid() {
+        // Check if process exists
+        let status = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status();
+        matches!(status, Ok(s) if s.success())
+    } else {
+        false
+    }
+}
+
+#[cfg(not(windows))]
+fn send_command_to_daemon(cmd: &str) -> StdResult<(), String> {
+    if !is_daemon_running() {
+        return Err("Daemon no está corriendo".to_string());
+    }
+    let cmd_path = get_command_path()?;
+    fs::write(&cmd_path, cmd)
+        .map_err(|e| format!("Error escribiendo comando: {}", e))
+}
+
+#[cfg(not(windows))]
+fn daemonize() -> StdResult<(), String> {
+    match unsafe { libc::fork() } {
+        -1 => Err("Error al hacer fork".to_string()),
+        0 => {
+            // Child — create new session
+            unsafe { libc::setsid(); };
+            // Redirect stdio to /dev/null
+            if let Ok(null) = fs::File::open("/dev/null") {
+                let fd = null.as_raw_fd();
+                unsafe {
+                    libc::dup2(fd, 0);
+                    libc::dup2(fd, 1);
+                    libc::dup2(fd, 2);
                 }
-                _ => {
-                    // One-shot commands handled via pipe/socket in future
-                    print_help();
-                    return Ok(());
+            }
+            write_pid_file()?;
+            Ok(())
+        }
+        _ => {
+            // Parent exits immediately
+            process::exit(0);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+async fn poll_command_file(command_sender: Sender<AppCommand>) {
+    let cmd_path = match get_command_path() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        if let Ok(content) = fs::read_to_string(&cmd_path) {
+            let cmd = content.trim().to_lowercase();
+            if !cmd.is_empty() {
+                let _ = fs::write(&cmd_path, "");
+                match cmd.as_str() {
+                    "pause" => { let _ = command_sender.send(AppCommand::Pause); }
+                    "resume" => { let _ = command_sender.send(AppCommand::Resume); }
+                    "next" => { let _ = command_sender.send(AppCommand::NextActivity); }
+                    "status" => { let _ = command_sender.send(AppCommand::ShowStatus); }
+                    "reload" => { let _ = command_sender.send(AppCommand::ReloadConfig); }
+                    "stop" | "exit" | "quit" => {
+                        let _ = command_sender.send(AppCommand::Exit);
+                        break;
+                    }
+                    _ => {}
                 }
             }
         }
     }
+}
+
+#[cfg(not(windows))]
+fn handle_cli_subcommand(args: &[String]) -> StdResult<Option<bool>, String> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+
+    let subcommand = args[0].as_str();
+    match subcommand {
+        "start" => {
+            if is_daemon_running() {
+                println!("Daemon ya está corriendo (PID {})", read_pid().unwrap_or(0));
+                return Ok(Some(true));
+            }
+            // Clean stale command file from previous stop
+            if let Ok(cmd_path) = get_command_path() {
+                let _ = fs::remove_file(cmd_path);
+            }
+            // Re-exec self with --daemon
+            let exe = env::current_exe().map_err(|e| format!("Error: {}", e))?;
+            let child = process::Command::new(&exe)
+                .arg("--daemon")
+                .spawn()
+                .map_err(|e| format!("Error iniciando daemon: {}", e))?;
+            // Give it a moment to write PID
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if is_daemon_running() {
+                println!("Daemon iniciado (PID {})", read_pid().unwrap_or(child.id()));
+            } else {
+                println!("Error: daemon no arrancó");
+            }
+            Ok(Some(true))
+        }
+        "stop" => {
+            if !is_daemon_running() {
+                println!("Daemon no está corriendo");
+                return Ok(Some(true));
+            }
+            let pid = read_pid()?;
+            let _ = send_command_to_daemon("stop");
+            // Wait for clean shutdown
+            for _ in 0..20 {
+                if !is_daemon_running() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            // Force kill if still running
+            if is_daemon_running() {
+                let _ = process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .status();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            if !is_daemon_running() {
+                // Clean up PID file
+                if let Ok(pid_path) = get_pid_path() {
+                    let _ = fs::remove_file(pid_path);
+                }
+                println!("Daemon detenido");
+            } else {
+                println!("No se pudo detener el daemon");
+            }
+            Ok(Some(true))
+        }
+        "pause" | "resume" | "next" | "reload" => {
+            if !is_daemon_running() {
+                println!("Daemon no está corriendo. Usa 'lorianworkspace start' primero.");
+                return Ok(Some(true));
+            }
+            send_command_to_daemon(subcommand)?;
+            println!("Comando '{}' enviado al daemon", subcommand);
+            Ok(Some(true))
+        }
+        "status" => {
+            if !is_daemon_running() {
+                println!("Daemon no está corriendo");
+                return Ok(Some(true));
+            }
+            let pid = read_pid()?;
+            send_command_to_daemon("status")?;
+            println!("Daemon corriendo (PID {})", pid);
+            // Give time for daemon to write status to log
+            println!("Estado escrito en el log");
+            Ok(Some(true))
+        }
+        "autostart" => {
+            let autostart_dir = dirs::config_dir()
+                .unwrap_or_else(|| PathBuf::from("~/.config"))
+                .join("autostart");
+            fs::create_dir_all(&autostart_dir)
+                .map_err(|e| format!("Error creando autostart dir: {}", e))?;
+            let desktop_entry = format!(
+                "[Desktop Entry]\nType=Application\nName=Lorian Workspace\nExec={} start\nComment=Discord Rich Presence Rotator\nX-GNOME-Autostart-enabled=true\n",
+                env::current_exe().unwrap_or_else(|_| PathBuf::from("lorianworkspace")).display()
+            );
+            let desktop_path = autostart_dir.join("lorianworkspace.desktop");
+            fs::write(&desktop_path, &desktop_entry)
+                .map_err(|e| format!("Error escribiendo autostart: {}", e))?;
+            println!("Autostart configurado en: {}", desktop_path.display());
+            println!("También puedes usar: systemctl --user enable lorianworkspace");
+            Ok(Some(true))
+        }
+        _ => Ok(None),
+    }
+}
+
+#[cfg(windows)]
+fn handle_cli_subcommand(_args: &[String]) -> StdResult<Option<bool>, String> {
+    Ok(None)
+}
+
+// ============================================================
+// Main — non-async entry point, fork BEFORE tokio runtime
+// ============================================================
+
+fn main() -> StdResult<(), String> {
+    let args: Vec<String> = env::args().collect();
+
+    // Handle CLI subcommands first (Linux)
+    #[cfg(not(windows))]
+    {
+        if args.len() > 1 {
+            let first = args[1].as_str();
+            if !first.starts_with("--") {
+                if let Some(done) = handle_cli_subcommand(&args[1..])? {
+                    return if done { Ok(()) } else { Ok(()) };
+                }
+            }
+        }
+    }
+
+    // Parse flags
+    let is_daemon = args.iter().any(|a| a == "--daemon" || a == "-d");
+    let is_help = args.iter().any(|a| a == "--help" || a == "-h");
+
+    if is_help {
+        print_help();
+        return Ok(());
+    }
+
+    // Daemonize BEFORE tokio runtime — fork kills worker threads
+    #[cfg(not(windows))]
+    if is_daemon {
+        daemonize()?;
+    }
+
+    // Now start tokio runtime in the daemon child (or foreground process)
+    tokio::runtime::Runtime::new()
+        .map_err(|e| format!("Error creando runtime tokio: {}", e))?
+        .block_on(async_main(is_daemon))
+}
+
+async fn async_main(is_daemon: bool) -> StdResult<(), String> {
 
     log_info("🚀 Iniciando Lorian Workspace...");
     log_info("🐧 Modo Linux - Rich Presence de Discord");
@@ -869,23 +1130,29 @@ async fn main() -> StdResult<(), String> {
     let (command_sender, command_receiver): (Sender<AppCommand>, Receiver<AppCommand>) =
         unbounded();
 
-    // Conectar a Discord
-    {
-        let mut manager = discord_manager.lock().await;
-        match manager.connect().await {
-            Ok(_) => {
-                if let Err(e) = manager.set_current_activity().await {
-                    log_error(&format!("⚠️  Error estableciendo actividad inicial: {}", e));
-                } else {
-                    log_info("✅ Discord Rich Presence activado con rotación automática!");
+    // Conectar a Discord (en background para no bloquear el runtime)
+    let discord_manager_connect = discord_manager.clone();
+    tokio::spawn(async move {
+        let mut manager = discord_manager_connect.lock().await;
+        log_info("🔌 Intentando conectar a Discord...");
+        loop {
+            match manager.connect().await {
+                Ok(_) => {
+                    if let Err(e) = manager.set_current_activity().await {
+                        log_error(&format!("⚠️  Error estableciendo actividad inicial: {}", e));
+                    } else {
+                        log_info("✅ Discord Rich Presence activado con rotación automática!");
+                    }
+                    break;
+                }
+                Err(e) => {
+                    log_error(&format!("❌ Error conectando a Discord: {}", e));
+                    log_error("💡 Reintentando en 10 segundos...");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                 }
             }
-            Err(e) => {
-                log_error(&format!("❌ Error conectando a Discord: {}", e));
-                log_error("💡 Asegúrate de que Discord esté abierto y tengas un Application ID válido");
-            }
         }
-    }
+    });
 
     // Iniciar File Watcher para hot reload
     let _file_watcher = setup_file_watcher(command_sender.clone())
@@ -897,34 +1164,40 @@ async fn main() -> StdResult<(), String> {
     let app_state_clone = app_state.clone();
     tokio::spawn(async move {
         loop {
-            let (duration, is_paused, is_connected) = {
+            let (duration, is_paused) = {
                 let manager = discord_manager_clone.lock().await;
                 let state = app_state_clone.lock().await;
                 (
                     manager.get_current_activity_duration(),
                     state.is_paused,
-                    manager.is_connection_alive(),
                 )
             };
 
-            if !is_connected {
-                let mut manager = discord_manager_clone.lock().await;
-                if manager.try_reconnect().await {
-                    log_info("🔗 Reconexión exitosa - continuando rotación");
-                } else {
+            tokio::time::sleep(tokio::time::Duration::from_secs(duration)).await;
+
+            if is_paused {
+                continue;
+            }
+
+            let mut manager = discord_manager_clone.lock().await;
+            if !manager.is_connection_alive() {
+                if !manager.try_reconnect().await {
                     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                     continue;
                 }
+                log_info("🔗 Reconexión exitosa - continuando rotación");
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_secs(duration)).await;
-
-            if !is_paused {
-                let mut manager = discord_manager_clone.lock().await;
-                if manager.is_connection_alive() {
-                    manager.next_activity();
-                    let _ = manager.set_current_activity().await;
-                }
+            manager.next_activity();
+            log_info(&format!(
+                "🔄 Rotación automática - cambiando a actividad {}/{} (name='{}')",
+                manager.current_activity_index + 1,
+                manager.activities.len(),
+                manager.activities.get(manager.current_activity_index).map(|a| a.name.as_str()).unwrap_or("?"),
+            ));
+            match manager.set_current_activity().await {
+                Ok(_) => log_info("🔄 Rotación automática - actividad cambiada exitosamente"),
+                Err(e) => log_error(&format!("⚠️ Error rotando actividad: {}", e)),
             }
         }
     });
@@ -1006,11 +1279,17 @@ async fn main() -> StdResult<(), String> {
         });
     }
 
+    // Iniciar command file poller en Linux (daemon mode)
+    #[cfg(not(windows))]
+    {
+        let cmd_sender = command_sender.clone();
+        tokio::spawn(async move {
+            poll_command_file(cmd_sender).await;
+        });
+    }
+
     // Inicializar System Tray (no-op en Linux)
-    let _tray = tray::SystemTray::new(command_sender.clone()).map_err(|e| {
-        log_error(&format!("{}", e));
-        String::new()
-    })?;
+    let _tray = tray::SystemTray::new(command_sender.clone());
 
     // Loop principal
     loop {
@@ -1033,6 +1312,17 @@ async fn main() -> StdResult<(), String> {
     let _ = manager.clear_activity().await;
     manager.disconnect().await;
     log_info("👋 App cerrada correctamente!");
+
+    // Clean up PID file on exit
+    #[cfg(not(windows))]
+    if is_daemon {
+        if let Ok(pid_path) = get_pid_path() {
+            let _ = fs::remove_file(pid_path);
+        }
+        if let Ok(cmd_path) = get_command_path() {
+            let _ = fs::remove_file(cmd_path);
+        }
+    }
 
     Ok(())
 }

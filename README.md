@@ -9,6 +9,7 @@
 | [![Windows](https://img.shields.io/badge/platform-Windows-blue.svg)](https://www.microsoft.com/windows)
 
 **A cross-platform Discord Rich Presence rotator with automatic activity cycling.**
+**Works on Linux (daemon/CLI) and Windows (system tray).**
 
 ## 🚀 Features
 
@@ -20,10 +21,13 @@
 - **No console window** on Windows / **Foreground CLI** on Linux
 - **Intelligent reconnection** handling for Discord client restarts
 
-### ⚙️ System Integration
+### 🖥️ System Integration
 - **Windows system tray icon** with right-click context menu
-- **Automatic startup** configuration support
-- **AppData storage** for user settings and logs
+- **Linux daemon mode** with background operation and PID file
+- **CLI subcommands** for daemon control (start, stop, pause, resume, next, status, reload)
+- **systemd user service** support for automatic startup
+- **Automatic startup** configuration support (Windows + Linux autostart)
+- **AppData/XDG storage** for user settings and logs
 - **Real-time configuration watching** and reloading
 
 ## 📦 Installation
@@ -50,12 +54,19 @@ cd Lorian-Workspace
 cargo build --release
 ./target/release/lorianworkspace
 
-# Optional: install to ~/.local/bin/
-cp target/release/lorianworkspace ~/.local/bin/
+# Or install with the install script:
+./install.sh
 ```
 
-On Linux, the app runs as a foreground CLI. Available commands at the prompt:
+On Linux, the app runs as a **foreground CLI** by default with stdin commands:
 `pause`, `resume`, `next`, `status`, `reload`, `exit`
+
+Or run as a **background daemon**:
+```bash
+./target/release/lorianworkspace start   # Start daemon
+./target/release/lorianworkspace status  # Check status
+./target/release/lorianworkspace stop    # Stop daemon
+```
 
 Configuration is stored at `~/.lorianworkspace/config.json`.
 
@@ -157,24 +168,38 @@ The application automatically creates configuration files in `%APPDATA%/lorianwo
 
 ## 🎯 Usage
 
-### System Tray Controls
+### System Tray Controls (Windows)
 - **Right Click** → Open context menu with all options
 - **Double Click** → Show/hide console for debugging
 - **Left Click** → Display current status
 
-### Available Commands
-- **Pause/Resume** - Stop or start activity rotation
-- **Next Activity** - Manually switch to next activity
-- **Reload Config** - Apply configuration changes instantly  
-- **Show Status** - Display current application status
-- **Open Config** - Edit configuration file
-- **Exit** - Close application
+### CLI Subcommands (Linux)
+```
+lorianworkspace start     Start daemon in background
+lorianworkspace stop      Stop daemon
+lorianworkspace pause     Pause activity rotation
+lorianworkspace resume    Resume activity rotation
+lorianworkspace next      Switch to next activity
+lorianworkspace status    Show daemon status
+lorianworkspace reload    Reload configuration
+lorianworkspace autostart Configure automatic startup
+```
+
+### Interactive Commands (stdin)
+Available when running in foreground mode:
+- **pause/resume** - Stop or start activity rotation
+- **next** - Manually switch to next activity
+- **reload** - Apply configuration changes instantly
+- **status** - Display current application status
+- **exit** - Close application
 
 ### Automatic Features
 - **Activity Rotation** - Cycles through configured activities automatically
 - **Auto-Reconnection** - Handles Discord restarts gracefully
 - **Configuration Watching** - Automatically reloads when config.json changes
 - **Error Recovery** - Continues running even if Discord disconnects
+- **PID File** - Tracks daemon process for reliable control
+- **Command File** - IPC mechanism for daemon control without sockets
 
 ## 🛠️ Development
 
@@ -215,24 +240,31 @@ Lorian-Workspace/
 
 ### Common Issues
 
-**Application doesn't appear in system tray**
+**Application doesn't appear in system tray (Windows)**
 - Check if the application is running in Task Manager
 - Restart the application as administrator
 - Check Windows system tray settings
+
+**Daemon won't start (Linux)**
+- Check `~/.lorianworkspace/app.log` for errors
+- Verify Discord is running and logged in
+- Ensure Application ID is valid in `~/.lorianworkspace/config.json`
+- Try running `lorianworkspace` in foreground to see errors
 
 **Discord activities not showing**
 - Verify Discord is running and logged in
 - Confirm Application ID is correct in config.json
 - Check that uploaded images match the names in configuration
-- Review logs in `%APPDATA%/lorianworkspace/app.log`
+- Review logs (see Logs Location above)
 
 **Configuration not reloading**
 - Ensure config.json has valid JSON syntax
-- Check file permissions in AppData folder
+- Check file permissions
 - Restart the application if hot reload fails
 
 ### Logs Location
-Application logs are stored in: `%APPDATA%/lorianworkspace/app.log`
+- **Windows**: `%APPDATA%/lorianworkspace/app.log`
+- **Linux**: `~/.lorianworkspace/app.log`
 
 ## 📄 License
 
